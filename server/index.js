@@ -1,103 +1,79 @@
 require('dotenv').config();
 const express = require("express");
 var cors = require('cors');
-const AccessToken = require('twilio').jwt.AccessToken;
-const VideoGrant = AccessToken.VideoGrant;
+const {RtcTokenBuilder, RtcRole} =  require('agora-access-token');
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT;
 
 const app = express();
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const sid = process.env.TWILIO_API_KEY_SID;
-const secret = process.env.TWILIO_API_KEY_SECRET
+const appID = process.env.AGORA_APP_ID;
+const appCertificate = process.env.AGORA_APP_CERTIFICATE;
 
-const client = require('twilio')(sid, secret, { accountSid: accountSid });
+const nocache = (_, resp, next) => {
+  resp.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+  resp.header('Expires', '-1');
+  resp.header('Pragma', 'no-cache');
+  next();
+}
+
 app.use(
     cors({origin: [`http://localhost:3000`, `http://127.0.0.1:${PORT}`]})
   );
 
-  function makeid(length) {
-    let result = '';
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const charactersLength = characters.length;
-    let counter = 0;
-    while (counter < length) {
-      result += characters.charAt(Math.floor(Math.random() * charactersLength));
-      counter += 1;
-    }
-    return result;
-}
-
-let myMiddleware = async function(req, res, next) {
+let myMiddleware = async function(req, resp, next) {
+  resp.header('Access-Control-Allow-Origin', '*');
+  
   try{
+    const channelName = req.params.channel;
 
-    console.log('starting to create room');
-  
-    let tempRoomname;
-    let roomList;
-  
-    do
-    {
-      tempRoomname = makeid(7);
-      console.log('room name generated ',tempRoomname);
-      roomList = await client.video.rooms.list({uniqueName: tempRoomname, status: 'in-progress'});
-      
-    }while(roomList.length>0);
-  
-      let room = await client.video.rooms.create({
-        uniqueName: tempRoomname,
-        type: 'go'
-      }).then((room)=>{return room});
-  
-      const videoGrant = new VideoGrant({
-        room: room.uniqueName,
-      })
-  
-      // Create an access token
-      const token1 = new AccessToken(
-        process.env.TWILIO_ACCOUNT_SID,
-        process.env.TWILIO_API_KEY_SID,
-        process.env.TWILIO_API_KEY_SECRET,
-      );
-  
-      // Add the video grant and the user's identity to the token
-      token1.addGrant(videoGrant);
-      token1.identity = makeid(5);
+    if (!channelName) {
+      return resp.status(500).json({ 'error': 'channel is required' });
+    }
 
-      const token2 = new AccessToken(
-        process.env.TWILIO_ACCOUNT_SID,
-        process.env.TWILIO_API_KEY_SID,
-        process.env.TWILIO_API_KEY_SECRET,
-      );
+      let uid = req.params.uid;
+  if(!uid || uid === '') {
+    return resp.status(500).json({ 'error': 'uid is required' });
+  }
+  // get role
+  let role;
+  if (req.params.role === 'publisher') {
+    role = RtcRole.PUBLISHER;
+  } else if (req.params.role === 'audience') {
+    role = RtcRole.SUBSCRIBER
+  } else {
+    return resp.status(500).json({ 'error': 'role is incorrect' });
+  }
+
+    let expireTime = req.query.expiry;
+  if (!expireTime || expireTime === '') {
+    expireTime = 3600;
+  } else {
+    expireTime = parseInt(expireTime, 10);
+  }
+
+  const currentTime = Math.floor(Date.now() / 1000);
+  const privilegeExpireTime = currentTime + expireTime;
+
+  let token;
+  if (req.params.tokentype === 'userAccount') {
+    token = RtcTokenBuilder.buildTokenWithAccount(appID, appCertificate, channelName, uid, role, privilegeExpireTime);
+  } else if (req.params.tokentype === 'uid') {
+    token = RtcTokenBuilder.buildTokenWithUid(appID, appCertificate, channelName, uid, role, privilegeExpireTime);
+  } else {
+    return resp.status(500).json({ 'error': 'token type is invalid' });
+  }
   
-      // Add the video grant and the user's identity to the token
-      token2.addGrant(videoGrant);
-      token2.identity = makeid(5);
-      
-      var data=
-      {
-        'roomName': room.uniqueName,
-        'accessTokenReceiver': token1.toJwt(),
-        'accessTokenSender': token2.toJwt()
-      }
-      
-      console.log('data is ',data);
-  
-      res.json(data)
-      next();
-  
-    }
-    catch (error) {
-      
-    }
+  return resp.json({ 'rtcToken': token });
+  }
+  catch(e)
+  {
+    resp.json(e);
+  }
 };
   
 
-app.get("/api",myMiddleware);
-
-
+app.get('/rtc/:channel/:role/:tokentype/:uid', nocache , myMiddleware);
 
 app.listen(PORT, () => {
   console.log(`Server listening on ${PORT}`);

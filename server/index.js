@@ -10,16 +10,16 @@ const app = express();
 const appID = process.env.AGORA_APP_ID;
 const appCertificate = process.env.AGORA_APP_CERTIFICATE;
 
+app.use(cors({
+  origin: '*'
+}))
+
 const nocache = (_, resp, next) => {
   resp.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
   resp.header('Expires', '-1');
   resp.header('Pragma', 'no-cache');
   next();
 }
-
-app.use(
-    cors({origin: [`http://localhost:3000`, `http://127.0.0.1:${PORT}`]})
-  );
 
 let myMiddleware = async function(req, resp, next) {
   resp.header('Access-Control-Allow-Origin', '*');
